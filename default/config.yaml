@@ -250,6 +250,13 @@ extensions:
     speechToText: Xenova/whisper-small
     textToSpeech: Xenova/speecht5_tts
 
+# Git backend for plugin and extension repository operations.
+# - "auto": prefer system git, fallback to built-in isomorphic backend
+# - "system": use system git only (requires git binary in PATH)
+# - "isomorphic": use built-in backend only (no system git required)
+git:
+  backend: auto
+
 # Additional model tokenizers can be downloaded on demand.
 # Disabling will fallback to another locally available tokenizer.
 enableDownloadableTokenizers: true

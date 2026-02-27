@@ -3,14 +3,20 @@ import fs from 'node:fs';
 
 import express from 'express';
 import sanitize from 'sanitize-filename';
-import { CheckRepoActions, default as simpleGit } from 'simple-git';
 
 import { PUBLIC_DIRECTORIES } from '../constants.js';
+import { getConfigValue } from '../util.js';
+import { createGitRepository } from '../git/repository.js';
+
+const GIT_TIMEOUT_MS = 5 * 60 * 1000;
+const gitBackend = getConfigValue('git.backend', 'auto');
 
 /**
- * @type {Partial<import('simple-git').SimpleGitOptions>}
+ * @param {string} extensionPath
  */
-const OPTIONS = Object.freeze({ timeout: { block: 5 * 60 * 1000 } });
+function createExtensionGit(extensionPath) {
+    return createGitRepository({ baseDir: extensionPath, timeoutMs: GIT_TIMEOUT_MS, backend: gitBackend });
+}
 
 /**
  * This function extracts the extension information from the manifest file.
@@ -35,7 +41,7 @@ async function getManifest(extensionPath) {
  * @returns {Promise<Object>} - Returns the extension information as an object
  */
 async function checkIfRepoIsUpToDate(extensionPath) {
-    const git = simpleGit({ baseDir: extensionPath, ...OPTIONS });
+    const git = createExtensionGit(extensionPath);
     await git.fetch('origin');
     const currentBranch = await git.branch();
     const currentCommitHash = await git.revparse(['HEAD']);
@@ -77,7 +83,7 @@ router.post('/install', async (request, response) => {
 
     try {
         // No timeout for cloning, as it may take a while depending on the repo size
-        const git = simpleGit();
+        const git = createGitRepository({ backend: gitBackend });
 
         // make sure the third-party directory exists
         if (!fs.existsSync(path.join(request.user.directories.extensions))) {
@@ -150,8 +156,8 @@ router.post('/update', async (request, response) => {
         }
 
         const { isUpToDate, remoteUrl } = await checkIfRepoIsUpToDate(extensionPath);
-        const git = simpleGit({ baseDir: extensionPath, ...OPTIONS });
-        const isRepo = await git.checkIsRepo(CheckRepoActions.IS_REPO_ROOT);
+        const git = createExtensionGit(extensionPath);
+        const isRepo = await git.checkIsRepoRoot();
         if (!isRepo) {
             throw new Error(`Directory is not a Git repository at ${extensionPath}`);
         }
@@ -193,7 +199,7 @@ router.post('/branches', async (request, response) => {
             return response.status(404).send(`Directory does not exist at ${extensionPath}`);
         }
 
-        const git = simpleGit({ baseDir: extensionPath, ...OPTIONS });
+        const git = createExtensionGit(extensionPath);
         // Unshallow the repository if it is shallow
         const isShallow = await git.revparse(['--is-shallow-repository']) === 'true';
         if (isShallow) {
@@ -238,7 +244,7 @@ router.post('/switch', async (request, response) => {
             return response.status(404).send(`Directory does not exist at ${extensionPath}`);
         }
 
-        const git = simpleGit({ baseDir: extensionPath, ...OPTIONS });
+        const git = createExtensionGit(extensionPath);
         const branches = await git.branchLocal();
 
         if (String(branch).startsWith('origin/')) {
@@ -345,10 +351,10 @@ router.post('/version', async (request, response) => {
             return response.status(404).send(`Directory does not exist at ${extensionPath}`);
         }
 
-        const git = simpleGit({ baseDir: extensionPath, ...OPTIONS });
+        const git = createExtensionGit(extensionPath);
         let currentCommitHash;
         try {
-            const isRepo = await git.checkIsRepo(CheckRepoActions.IS_REPO_ROOT);
+            const isRepo = await git.checkIsRepoRoot();
             if (!isRepo) {
                 throw new Error(`Directory is not a Git repository at ${extensionPath}`);
             }

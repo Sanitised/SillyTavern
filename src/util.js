@@ -11,17 +11,16 @@ import crypto from 'node:crypto';
 import readline from 'node:readline';
 
 import yaml from 'yaml';
-import { sync as commandExistsSync } from 'command-exists';
 import _ from 'lodash';
 import yauzl from 'yauzl';
 import mime from 'mime-types';
-import { default as simpleGit } from 'simple-git';
 import chalk from 'chalk';
 import bytes from 'bytes';
 import { LOG_LEVELS, CHAT_COMPLETION_SOURCES, MEDIA_REQUEST_TYPE } from './constants.js';
 import { serverDirectory } from './server-directory.js';
 import { sync as writeFileAtomicSync } from 'write-file-atomic';
 import { isFirefox } from './express-common.js';
+import { createGitRepository } from './git/repository.js';
 
 /**
  * Parsed config object.
@@ -144,20 +143,20 @@ export async function getVersion() {
         const require = createRequire(import.meta.url);
         const pkgJson = require(path.join(serverDirectory, './package.json'));
         pkgVersion = pkgJson.version;
-        if (commandExistsSync('git')) {
-            const git = simpleGit({ baseDir: serverDirectory });
-            gitRevision = await git.revparse(['--short', 'HEAD']);
-            gitBranch = await git.revparse(['--abbrev-ref', 'HEAD']);
-            commitDate = await git.show(['-s', '--format=%ci', gitRevision]);
+        const gitBackend = getConfigValue('git.backend', 'auto');
+        const git = createGitRepository({ baseDir: serverDirectory, backend: gitBackend });
+        gitRevision = await git.revparse(['--short', 'HEAD']);
+        gitBranch = await git.revparse(['--abbrev-ref', 'HEAD']);
+        commitDate = await git.show(['-s', '--format=%ci', gitRevision]);
 
-            const trackingBranch = await git.revparse(['--abbrev-ref', '@{u}']);
+        const trackingBranch = await git.revparse(['--abbrev-ref', '@{u}']);
 
-            // Might fail, but exception is caught. Just don't run anything relevant after in this block...
-            const localLatest = await git.revparse(['HEAD']);
-            const remoteLatest = await git.revparse([trackingBranch]);
-            isLatest = localLatest === remoteLatest;
-        }
-    } catch {
+        // Might fail, but exception is caught. Just don't run anything relevant after in this block...
+        const localLatest = await git.revparse(['HEAD']);
+        const remoteLatest = await git.revparse([trackingBranch]);
+        isLatest = localLatest === remoteLatest;
+    }
+    catch {
         // suppress exception
     }
 

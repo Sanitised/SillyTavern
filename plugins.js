@@ -8,12 +8,13 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
-import { default as git, CheckRepoActions } from 'simple-git';
 import { color } from './src/util.js';
+import { createGitRepository } from './src/git/repository.js';
 
 const __dirname = import.meta.dirname ?? path.dirname(fileURLToPath(import.meta.url));
 process.chdir(__dirname);
 const pluginsPath = './plugins';
+const gitBackend = process.env.SILLYTAVERN_GIT_BACKEND || 'auto';
 
 const command = process.argv[2];
 
@@ -37,6 +38,13 @@ if (command === 'install') {
 }
 
 async function updatePlugins() {
+    try {
+        createGitRepository({ backend: gitBackend });
+    } catch (error) {
+        console.error(color.red(`Git backend is unavailable: ${error.message}`));
+        return;
+    }
+
     const directories = fs.readdirSync(pluginsPath)
         .filter(file => !file.startsWith('.'))
         .filter(file => fs.statSync(path.join(pluginsPath, file)).isDirectory());
@@ -47,9 +55,9 @@ async function updatePlugins() {
         try {
             console.log(`Updating plugin ${color.green(directory)}...`);
             const pluginPath = path.join(pluginsPath, directory);
-            const pluginRepo = git(pluginPath);
+            const pluginRepo = createGitRepository({ baseDir: pluginPath, backend: gitBackend });
 
-            const isRepo = await pluginRepo.checkIsRepo(CheckRepoActions.IS_REPO_ROOT);
+            const isRepo = await pluginRepo.checkIsRepoRoot();
             if (!isRepo) {
                 console.log(`Directory ${color.yellow(directory)} is not a Git repository`);
                 continue;
@@ -87,7 +95,7 @@ async function installPlugin(pluginName) {
             return console.log(color.yellow(`Directory already exists at ${pluginPath}`));
         }
 
-        await git().clone(pluginName, pluginPath, { '--depth': 1 });
+        await createGitRepository({ backend: gitBackend }).clone(pluginName, pluginPath, { '--depth': 1 });
         console.log(`Plugin ${color.green(pluginName)} installed to ${color.cyan(pluginPath)}`);
     } catch (error) {
         console.error(color.red(`Failed to install plugin ${pluginName}`), error);

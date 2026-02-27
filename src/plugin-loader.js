@@ -3,12 +3,12 @@ import path from 'node:path';
 import url from 'node:url';
 
 import express from 'express';
-import { default as git, CheckRepoActions } from 'simple-git';
-import { sync as commandExistsSync } from 'command-exists';
 import { getConfigValue, color } from './util.js';
+import { createGitRepository } from './git/repository.js';
 
 const enableServerPlugins = !!getConfigValue('enableServerPlugins', false, 'boolean');
 const enableServerPluginsAutoUpdate = !!getConfigValue('enableServerPluginsAutoUpdate', true, 'boolean');
+const gitBackend = getConfigValue('git.backend', 'auto');
 
 /**
  * Map of loaded plugins.
@@ -249,8 +249,10 @@ async function updatePlugins(pluginsPath) {
 
     console.log(color.blue('Auto-updating server plugins... Set'), color.yellow('enableServerPluginsAutoUpdate: false'), color.blue('in config.yaml to disable this feature.'));
 
-    if (!commandExistsSync('git')) {
-        console.error(color.red('Git is not installed. Please install Git to enable auto-updating of server plugins.'));
+    try {
+        createGitRepository({ backend: gitBackend });
+    } catch (error) {
+        console.error(color.red(`Git backend is unavailable: ${error.message}`));
         return;
     }
 
@@ -259,9 +261,9 @@ async function updatePlugins(pluginsPath) {
     for (const directory of directories) {
         try {
             const pluginPath = path.join(pluginsPath, directory);
-            const pluginRepo = git(pluginPath);
+            const pluginRepo = createGitRepository({ baseDir: pluginPath, backend: gitBackend });
 
-            const isRepo = await pluginRepo.checkIsRepo(CheckRepoActions.IS_REPO_ROOT);
+            const isRepo = await pluginRepo.checkIsRepoRoot();
             if (!isRepo) {
                 continue;
             }
