@@ -299,7 +299,7 @@ class IsomorphicGitRepository {
         const committer = commit.committer ?? commit.author;
         const timestampMs = this.toTimestampMs(Number(committer?.timestamp ?? 0));
         const timezoneOffset = Number(committer?.timezoneOffset ?? 0);
-        const shiftedTimestamp = timestampMs + timezoneOffset * 60_000;
+        const shiftedTimestamp = timestampMs - timezoneOffset * 60_000;
         const date = new Date(shiftedTimestamp);
 
         const year = date.getUTCFullYear();
@@ -311,7 +311,7 @@ class IsomorphicGitRepository {
         const absOffset = Math.abs(timezoneOffset);
         const offsetHours = String(Math.floor(absOffset / 60)).padStart(2, '0');
         const offsetMinutes = String(absOffset % 60).padStart(2, '0');
-        const sign = timezoneOffset >= 0 ? '+' : '-';
+        const sign = timezoneOffset <= 0 ? '+' : '-';
 
         return `${year}-${month}-${day} ${hours}:${minutes}:${seconds} ${sign}${offsetHours}${offsetMinutes}`;
     }
@@ -326,6 +326,14 @@ class IsomorphicGitRepository {
 
         if (!rawRef) {
             throw new Error('Cannot resolve an empty git ref.');
+        }
+
+        if (/^[0-9a-f]{4,40}$/i.test(rawRef)) {
+            try {
+                return await git.expandOid({ ...repo, oid: rawRef.toLowerCase() });
+            } catch {
+                // not an object id, continue with ref resolution
+            }
         }
 
         const candidates = [];
@@ -355,6 +363,82 @@ class IsomorphicGitRepository {
         }
 
         throw new Error(`Could not resolve git ref: ${rawRef}`);
+    }
+
+    /**
+     * @param {string} startOid
+     * @returns {Promise<Set<string>>}
+     */
+    async collectReachableCommitSet(startOid) {
+        const repo = this.getRepoOptions();
+        const visited = new Set();
+        const stack = [startOid];
+
+        while (stack.length > 0) {
+            const oid = stack.pop();
+
+            if (!oid || visited.has(oid)) {
+                continue;
+            }
+
+            visited.add(oid);
+
+            try {
+                const { commit } = await git.readCommit({ ...repo, oid });
+                for (const parentOid of commit.parent ?? []) {
+                    if (!visited.has(parentOid)) {
+                        stack.push(parentOid);
+                    }
+                }
+            } catch {
+                // Ignore missing parent objects (e.g. shallow history) and keep traversing known commits.
+            }
+        }
+
+        return visited;
+    }
+
+    /**
+     * @param {string} startOid
+     * @param {Set<string>} excludedOids
+     * @returns {Promise<Array<{ oid: string, commit: import('isomorphic-git').CommitObject }>>}
+     */
+    async collectCommitsExcluding(startOid, excludedOids) {
+        const repo = this.getRepoOptions();
+        const visited = new Set();
+        const stack = [startOid];
+        const commits = [];
+
+        while (stack.length > 0) {
+            const oid = stack.pop();
+
+            if (!oid || visited.has(oid) || excludedOids.has(oid)) {
+                continue;
+            }
+
+            visited.add(oid);
+
+            try {
+                const { commit } = await git.readCommit({ ...repo, oid });
+                commits.push({ oid, commit });
+
+                for (const parentOid of commit.parent ?? []) {
+                    if (!visited.has(parentOid) && !excludedOids.has(parentOid)) {
+                        stack.push(parentOid);
+                    }
+                }
+            } catch {
+                // Ignore missing parent objects (e.g. shallow history) and continue with known commits.
+            }
+        }
+
+        commits.sort((a, b) => {
+            const aTime = Number(a.commit.committer?.timestamp ?? a.commit.author?.timestamp ?? 0);
+            const bTime = Number(b.commit.committer?.timestamp ?? b.commit.author?.timestamp ?? 0);
+            return bTime - aTime;
+        });
+
+        return commits;
     }
 
     /**
@@ -479,14 +563,46 @@ class IsomorphicGitRepository {
     async log(args) {
         const fromOid = await this.resolveRef(args.from);
         const toOid = await this.resolveRef(args.to);
-        const entries = await git.log({ ...this.getRepoOptions(), ref: toOid });
+
+        if (fromOid === toOid) {
+            return {
+                all: [],
+                latest: null,
+                total: 0,
+            };
+        }
+
+        try {
+            const isToDescendedFromFrom = await git.isDescendent({
+                ...this.getRepoOptions(),
+                oid: toOid,
+                ancestor: fromOid,
+            });
+
+            if (!isToDescendedFromFrom) {
+                const isFromDescendedFromTo = await git.isDescendent({
+                    ...this.getRepoOptions(),
+                    oid: fromOid,
+                    ancestor: toOid,
+                });
+
+                if (isFromDescendedFromTo) {
+                    return {
+                        all: [],
+                        latest: null,
+                        total: 0,
+                    };
+                }
+            }
+        } catch {
+            // Fall back to full set-difference behavior for shallow/unusual histories.
+        }
+
+        const fromHistory = await this.collectReachableCommitSet(fromOid);
+        const entries = await this.collectCommitsExcluding(toOid, fromHistory);
         const all = [];
 
         for (const entry of entries) {
-            if (entry.oid === fromOid) {
-                break;
-            }
-
             all.push({
                 hash: entry.oid,
                 message: entry.commit.message.split('\n')[0] ?? '',

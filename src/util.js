@@ -145,14 +145,15 @@ export async function getVersion() {
         pkgVersion = pkgJson.version;
         const gitBackend = getConfigValue('git.backend', 'auto');
         const git = createGitRepository({ baseDir: serverDirectory, backend: gitBackend });
+        const gitRevisionFull = await git.revparse(['HEAD']);
         gitRevision = await git.revparse(['--short', 'HEAD']);
         gitBranch = await git.revparse(['--abbrev-ref', 'HEAD']);
-        commitDate = await git.show(['-s', '--format=%ci', gitRevision]);
+        commitDate = await git.show(['-s', '--format=%ci', gitRevisionFull]);
 
         const trackingBranch = await git.revparse(['--abbrev-ref', '@{u}']);
 
         // Might fail, but exception is caught. Just don't run anything relevant after in this block...
-        const localLatest = await git.revparse(['HEAD']);
+        const localLatest = gitRevisionFull;
         const remoteLatest = await git.revparse([trackingBranch]);
         isLatest = localLatest === remoteLatest;
     } catch {
