@@ -155,8 +155,7 @@ export async function getVersion() {
         const localLatest = await git.revparse(['HEAD']);
         const remoteLatest = await git.revparse([trackingBranch]);
         isLatest = localLatest === remoteLatest;
-    }
-    catch {
+    } catch {
         // suppress exception
     }
 

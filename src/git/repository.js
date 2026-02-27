@@ -653,7 +653,6 @@ class IsomorphicGitRepository {
         await git.checkout({
             ...this.getRepoOptions(),
             ref: branchName,
-            force: true,
         });
     }
 
@@ -694,7 +693,6 @@ class IsomorphicGitRepository {
         await git.checkout({
             ...repo,
             ref: localBranch,
-            force: true,
         });
     }
 
