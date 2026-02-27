@@ -156,7 +156,7 @@ class SystemGitRepository {
     }
 
     async revparse(args) {
-        return this.git.revparse(args);
+        return (await this.git.revparse(args)).trim();
     }
 
     async show(args) {
@@ -216,12 +216,15 @@ class SystemGitRepository {
 
 class IsomorphicGitRepository {
     /**
-     * @param {{ baseDir?: string }} options
+     * @param {{ baseDir?: string, timeoutMs?: number }} options
      */
-    constructor({ baseDir }) {
+    constructor({ baseDir, timeoutMs }) {
         assertIsomorphicGitAvailable();
         this.backend = GIT_BACKENDS.ISOMORPHIC;
         this.baseDir = baseDir ? path.resolve(baseDir) : null;
+        this.timeoutMs = typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs > 0
+            ? timeoutMs
+            : null;
     }
 
     /**
@@ -245,6 +248,37 @@ class IsomorphicGitRepository {
             dir: path.resolve(dirOverride ?? this.getBaseDirOrThrow()),
             http,
         };
+    }
+
+    /**
+     * @template T
+     * @param {string} operationName
+     * @param {(signal?: AbortSignal) => Promise<T>} operation
+     * @returns {Promise<T>}
+     */
+    async withTimeout(operationName, operation) {
+        if (!this.timeoutMs) {
+            return operation();
+        }
+
+        const controller = new AbortController();
+        let timeoutId;
+
+        const timeoutPromise = new Promise((_, reject) => {
+            timeoutId = setTimeout(() => {
+                controller.abort();
+                reject(new Error(`Git ${operationName} timed out after ${this.timeoutMs}ms.`));
+            }, this.timeoutMs);
+        });
+
+        try {
+            return await Promise.race([
+                operation(controller.signal),
+                timeoutPromise,
+            ]);
+        } finally {
+            clearTimeout(timeoutId);
+        }
     }
 
     /**
@@ -498,7 +532,7 @@ class IsomorphicGitRepository {
             fetchOptions.depth = MAX_UNSHALLOW_DEPTH;
         }
 
-        await git.fetch(fetchOptions);
+        await this.withTimeout('fetch', signal => git.fetch({ ...fetchOptions, signal }));
     }
 
     /**
@@ -668,7 +702,7 @@ class IsomorphicGitRepository {
             pullOptions.fastForwardOnly = true;
         }
 
-        await git.pull(pullOptions);
+        await this.withTimeout('pull', signal => git.pull({ ...pullOptions, signal }));
     }
 
     /**
@@ -680,7 +714,7 @@ class IsomorphicGitRepository {
         const depthValue = Number.parseInt(String(options['--depth'] ?? ''), 10);
         const branch = options['--branch'] ? String(options['--branch']) : undefined;
 
-        await git.clone({
+        await this.withTimeout('clone', signal => git.clone({
             fs,
             http,
             dir: localPath,
@@ -688,7 +722,8 @@ class IsomorphicGitRepository {
             depth: Number.isFinite(depthValue) ? depthValue : undefined,
             ref: branch,
             singleBranch: Boolean(branch),
-        });
+            signal,
+        }));
     }
 
     /**
