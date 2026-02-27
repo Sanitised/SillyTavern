@@ -9,6 +9,37 @@ const DEFAULT_REMOTE = 'origin';
 const MAX_UNSHALLOW_DEPTH = 2_147_483_647;
 const require = createRequire(import.meta.url);
 
+/**
+ * @typedef {{ from: string, to: string }} GitLogRange
+ */
+
+/**
+ * @typedef {{ hash: string, message: string, date: string, refs: string, body: string, author_name: string, author_email: string }} GitLogEntry
+ */
+
+/**
+ * @typedef {{ all: GitLogEntry[], latest: GitLogEntry | null, total: number }} GitLogResult
+ */
+
+/**
+ * @typedef {object} GitRepository
+ * @property {'system' | 'isomorphic'} backend
+ * @property {string | null} baseDir
+ * @property {() => Promise<boolean>} checkIsRepoRoot
+ * @property {(remote?: string, options?: string[]) => Promise<void>} fetch
+ * @property {(args: string[]) => Promise<string>} revparse
+ * @property {(args: string[]) => Promise<string>} show
+ * @property {(args: GitLogRange) => Promise<any>} log
+ * @property {(verbose?: boolean) => Promise<any>} getRemotes
+ * @property {(remote?: string, branch?: string) => Promise<void>} pull
+ * @property {(url: string, localPath: string, options?: Record<string, any>) => Promise<void>} clone
+ * @property {(options?: string[]) => Promise<any>} branch
+ * @property {() => Promise<any>} branchLocal
+ * @property {(branchName: string) => Promise<void>} checkout
+ * @property {(localBranch: string, startPoint: string) => Promise<void>} checkoutBranch
+ * @property {(args: string[]) => Promise<any>} remote
+ */
+
 let git = null;
 let http = null;
 
@@ -95,7 +126,7 @@ export function resolveGitBackend(preferredBackend) {
 
 /**
  * @param {{ baseDir?: string, timeoutMs?: number, backend?: string }} [options]
- * @returns {SystemGitRepository | IsomorphicGitRepository}
+ * @returns {GitRepository}
  */
 export function createGitRepository(options = {}) {
     const backend = resolveGitBackend(options.backend);
@@ -107,6 +138,9 @@ export function createGitRepository(options = {}) {
     return new IsomorphicGitRepository(options);
 }
 
+/**
+ * @implements {GitRepository}
+ */
 class SystemGitRepository {
     /**
      * @param {{ baseDir?: string, timeoutMs?: number }} options
@@ -214,6 +248,9 @@ class SystemGitRepository {
     }
 }
 
+/**
+ * @implements {GitRepository}
+ */
 class IsomorphicGitRepository {
     /**
      * @param {{ baseDir?: string, timeoutMs?: number }} options
@@ -591,8 +628,8 @@ class IsomorphicGitRepository {
     }
 
     /**
-     * @param {{ from: string, to: string }} args
-     * @returns {Promise<{all: Array<{hash: string, message: string, date: string, refs: string, body: string, author_name: string, author_email: string}>, latest: object | null, total: number}>}
+     * @param {GitLogRange} args
+     * @returns {Promise<GitLogResult>}
      */
     async log(args) {
         const fromOid = await this.resolveRef(args.from);
