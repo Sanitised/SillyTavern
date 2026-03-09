@@ -71,6 +71,13 @@ const SHORT_COMMIT_LENGTH = 7;
  */
 
 /**
+ * @typedef {object} GitCommitInfo
+ * @property {string} oid
+ * @property {string} shortOid
+ * @property {string} commitDate
+ */
+
+/**
  * @typedef {object} GitRepoUpdateState
  * @property {boolean} isRepo
  * @property {string} branch
@@ -88,6 +95,8 @@ const SHORT_COMMIT_LENGTH = 7;
  * @property {(localPath: string, options: GitFetchOptions) => Promise<void>} fetch
  * @property {(localPath: string, options?: GitBranchOptions) => Promise<any>} branch
  * @property {(localPath: string, ref: string) => Promise<string>} resolveRef
+ * @property {(localPath: string, ref: string) => Promise<GitCommitInfo>} getCommitInfo
+ * @property {(localPath: string, branch: string) => Promise<string | null>} getTrackingRef
  * @property {(localPath: string) => Promise<GitRemote[]>} listRemotes
  * @property {(localPath: string, options: GitIsDescendentOptions) => Promise<boolean>} isDescendent
  * @property {(localPath: string, options: GitPullOptions) => Promise<void>} pull
@@ -149,6 +158,27 @@ function normalizeRemote(remote, fallback = undefined) {
     }
 
     return fallback;
+}
+
+/**
+ * @param {string | null | undefined} remote
+ * @param {string | null | undefined} mergeRef
+ * @returns {string | null}
+ */
+function buildTrackingRef(remote, mergeRef) {
+    if (!remote || !mergeRef) {
+        return null;
+    }
+
+    if (remote === '.') {
+        return mergeRef;
+    }
+
+    if (mergeRef.startsWith('refs/heads/')) {
+        return `refs/remotes/${remote}/${mergeRef.slice('refs/heads/'.length)}`;
+    }
+
+    return mergeRef;
 }
 
 /**
@@ -405,6 +435,43 @@ class SimpleGitClient {
 
     /**
      * @param {string} localPath
+     * @param {string} ref
+     * @returns {Promise<GitCommitInfo>}
+     */
+    async getCommitInfo(localPath, ref) {
+        const repositoryGit = this.getRepositoryGit(localPath);
+        const oid = await repositoryGit.revparse([ref]);
+        const commitDate = (await repositoryGit.show(['-s', '--format=%ci', oid])).trim();
+
+        return {
+            oid,
+            shortOid: oid.slice(0, SHORT_COMMIT_LENGTH),
+            commitDate,
+        };
+    }
+
+    /**
+     * @param {string} localPath
+     * @param {string} branch
+     * @returns {Promise<string | null>}
+     */
+    async getTrackingRef(localPath, branch) {
+        if (typeof branch !== 'string' || !branch) {
+            return null;
+        }
+
+        try {
+            const repositoryGit = this.getRepositoryGit(localPath);
+            const remote = (await repositoryGit.raw(['config', '--get', `branch.${branch}.remote`])).trim();
+            const mergeRef = (await repositoryGit.raw(['config', '--get', `branch.${branch}.merge`])).trim();
+            return buildTrackingRef(remote, mergeRef);
+        } catch {
+            return null;
+        }
+    }
+
+    /**
+     * @param {string} localPath
      * @returns {Promise<GitRemote[]>}
      */
     async listRemotes(localPath) {
@@ -623,6 +690,41 @@ class IsomorphicGitClient {
      */
     async resolveRef(localPath, ref) {
         return git.resolveRef({ fs, dir: localPath, ref });
+    }
+
+    /**
+     * @param {string} localPath
+     * @param {string} ref
+     * @returns {Promise<GitCommitInfo>}
+     */
+    async getCommitInfo(localPath, ref) {
+        const oid = await git.resolveRef({ fs, dir: localPath, ref });
+        const { commit } = await git.readCommit({ fs, dir: localPath, oid });
+
+        return {
+            oid,
+            shortOid: oid.slice(0, SHORT_COMMIT_LENGTH),
+            commitDate: new Date(commit.committer.timestamp * 1000).toISOString(),
+        };
+    }
+
+    /**
+     * @param {string} localPath
+     * @param {string} branch
+     * @returns {Promise<string | null>}
+     */
+    async getTrackingRef(localPath, branch) {
+        if (typeof branch !== 'string' || !branch) {
+            return null;
+        }
+
+        try {
+            const remote = await git.getConfig({ fs, dir: localPath, path: `branch.${branch}.remote` });
+            const mergeRef = await git.getConfig({ fs, dir: localPath, path: `branch.${branch}.merge` });
+            return buildTrackingRef(remote, mergeRef);
+        } catch {
+            return null;
+        }
     }
 
     /**
