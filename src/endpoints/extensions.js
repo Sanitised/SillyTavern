@@ -6,7 +6,7 @@ import sanitize from 'sanitize-filename';
 
 import { PUBLIC_DIRECTORIES } from '../constants.js';
 import { getConfigValue } from '../util.js';
-import { createGitClient } from '../git/client.js';
+import { createGitClient, getRepoUpdateState } from '../git/client.js';
 
 const gitBackend = getConfigValue('git.backend', 'auto');
 
@@ -36,28 +36,11 @@ async function getManifest(extensionPath) {
  * @returns {Promise<Object>} - Returns the extension information as an object
  */
 async function checkIfRepoIsUpToDate(extensionPath) {
-    await gitClient.fetch(extensionPath, { remote: 'origin' });
-    const remotes = await gitClient.listRemotes(extensionPath);
-    if (remotes.length === 0) {
-        return {
-            isUpToDate: true,
-            remoteUrl: '',
-        };
-    }
-
-    const currentBranch = await gitClient.branch(extensionPath);
-    const currentCommitHash = await gitClient.resolveRef(extensionPath, 'HEAD');
-    const remoteCommitHash = await gitClient.resolveRef(extensionPath, `refs/remotes/origin/${currentBranch.current}`);
-    const isUpToDate = await gitClient.isDescendent(extensionPath, {
-        oid: currentCommitHash,
-        ancestor: remoteCommitHash,
-    });
-
+    const updateState = await getRepoUpdateState(gitClient, extensionPath);
     return {
-        isUpToDate,
-        remoteUrl: remotes[0].url,
+        isUpToDate: updateState.isUpToDate,
+        remoteUrl: updateState.remoteUrl,
     };
-
 }
 
 export const router = express.Router();

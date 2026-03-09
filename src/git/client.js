@@ -71,6 +71,16 @@ const SHORT_COMMIT_LENGTH = 7;
  */
 
 /**
+ * @typedef {object} GitRepoUpdateState
+ * @property {boolean} isRepo
+ * @property {string} branch
+ * @property {string} currentCommit
+ * @property {string} remoteCommit
+ * @property {boolean} isUpToDate
+ * @property {string} remoteUrl
+ */
+
+/**
  * @typedef {object} GitClient
  * @property {'system' | 'builtin'} backend
  * @property {(url: string, localPath: string, options?: GitCloneOptions) => Promise<void>} clone
@@ -246,6 +256,54 @@ export function createGitClient(options = {}) {
     }
 
     return new IsomorphicGitClient();
+}
+
+/**
+ * Determine whether a repository has updates available on a remote for its current branch.
+ * @param {GitClient} gitClient
+ * @param {string} localPath
+ * @param {{ remote?: string }} [options]
+ * @returns {Promise<GitRepoUpdateState>}
+ */
+export async function getRepoUpdateState(gitClient, localPath, options = {}) {
+    const remote = typeof options.remote === 'string' && options.remote ? options.remote : 'origin';
+    const isRepo = await gitClient.checkIsRepo(localPath);
+    if (!isRepo) {
+        return {
+            isRepo: false,
+            branch: '',
+            currentCommit: '',
+            remoteCommit: '',
+            isUpToDate: true,
+            remoteUrl: '',
+        };
+    }
+
+    await gitClient.fetch(localPath, { remote });
+
+    const remotes = await gitClient.listRemotes(localPath);
+    const remoteUrl = remotes.find(entry => entry.name === remote)?.url ?? '';
+    const branchInfo = await gitClient.branch(localPath);
+    const branch = branchInfo.current;
+    if (!branch) {
+        throw new Error(`No current branch found for repository at ${localPath}`);
+    }
+
+    const currentCommit = await gitClient.resolveRef(localPath, 'HEAD');
+    const remoteCommit = await gitClient.resolveRef(localPath, `refs/remotes/${remote}/${branch}`);
+    const isUpToDate = await gitClient.isDescendent(localPath, {
+        oid: currentCommit,
+        ancestor: remoteCommit,
+    });
+
+    return {
+        isRepo: true,
+        branch,
+        currentCommit,
+        remoteCommit,
+        isUpToDate,
+        remoteUrl,
+    };
 }
 
 /**
